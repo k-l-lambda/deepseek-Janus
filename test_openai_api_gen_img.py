@@ -47,7 +47,7 @@ def main():
 	)
 
 	response = client.images.generate(
-		model="janus-1.3b",
+		model="janus-pro-7b",
 		prompt="A beautiful sunset over mountains",
 		n=1,
 		size="384x384",

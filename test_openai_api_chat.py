@@ -24,7 +24,7 @@ def main ():
 
 	# Vision API
 	response = client.chat.completions.create(
-		model="janus-1.3b",
+		model="janus-pro-7b",
 		messages=[
 			{
 				"role": "user",

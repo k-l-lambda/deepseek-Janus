@@ -12,9 +12,23 @@ from janus.models import MultiModalityCausalLM, VLChatProcessor
 import numpy as np
 import time
 import requests
+import uuid
+from dataclasses import dataclass, field, asdict
+import json
 
 # Import the multimodal understanding functionality
 from demo.fastapi_app import generate_image
+
+class ModelData(BaseModel):
+    id: str
+    object: str = "model"
+    created: int
+    owned_by: str
+    permission: List[dict] = []
+
+class ModelList(BaseModel):
+    object: str = "list"
+    data: List[ModelData]
 
 #model_path = "deepseek-ai/Janus-1.3B"
 model_path = "deepseek-ai/Janus-Pro-7B"
@@ -75,25 +89,57 @@ class ImageGenerationRequest(BaseModel):
     seed: Optional[int] = None
     guidance: Optional[float] = 5.0
 
+class CompletionRequest(BaseModel):
+    model: str
+    prompt: str
+    max_tokens: Optional[int]	= 512
+    temperature: Optional[float]	= 0.0
+    top_p: Optional[float] = 1.0
+    n: Optional[int]	= 1
+    image_data: Optional[str] = None
+
+@dataclass
+class CompletionChoice:
+    text: str
+    index: int
+    logprobs: Optional[dict] = None
+    finish_reason: Optional[str] = None
+
+@dataclass
+class CompletionUsage:
+    prompt_tokens: str
+    completion_tokens: str
+    total_tokens: str
+
+class CompletionResponse(BaseModel):
+    id: str = field(default_factory=lambda: f"cmpl-{str(uuid.uuid4())}")
+    object: str = "text_completion"
+    created: int = field(default_factory=lambda: int(time.time()))
+    model: str = None
+    choices: List[CompletionChoice] = field(default_factory=list)
+    usage: CompletionUsage = None
+
+
 @torch.inference_mode()
-def multimodal_understanding(image_data, question, seed, top_p, temperature):
+def multimodal_understanding(image_data=None, question=None, prompt=None, seed=None, top_p=1, temperature=1, max_new_tokens=512):
     torch.cuda.empty_cache()
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    torch.cuda.manual_seed(seed)
+    if seed is not None:
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        torch.cuda.manual_seed(seed)
 
     conversation = [
         {
             "role": "User",
             "content": f"<image_placeholder>\n{question}",
-            "images": [image_data],
+            "images": [image_data] if image_data is not None else [],
         },
         {"role": "Assistant", "content": ""},
-    ]
+    ] if question is not None else None
 
-    pil_images = [Image.open(io.BytesIO(image_data))]
+    pil_images = [Image.open(io.BytesIO(image_data))] if image_data is not None else []
     prepare_inputs = vl_chat_processor(
-        conversations=conversation, images=pil_images, force_batchify=True
+        conversations=conversation, prompt=prompt, images=pil_images, force_batchify=True
     ).to(cuda_device, dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float16)
     
     inputs_embeds = vl_gpt.prepare_inputs_embeds(**prepare_inputs)
@@ -103,7 +149,7 @@ def multimodal_understanding(image_data, question, seed, top_p, temperature):
         pad_token_id=tokenizer.eos_token_id,
         bos_token_id=tokenizer.bos_token_id,
         eos_token_id=tokenizer.eos_token_id,
-        max_new_tokens=512,
+        max_new_tokens=max_new_tokens,
         do_sample=False if temperature == 0 else True,
         use_cache=True,
         temperature=temperature,
@@ -112,6 +158,50 @@ def multimodal_understanding(image_data, question, seed, top_p, temperature):
     
     answer = tokenizer.decode(outputs[0].cpu().tolist(), skip_special_tokens=True)
     return answer
+
+@app.get("/v1/models")
+async def list_models():
+    models = [
+        #ModelData(
+        #    id="janus-1.3b",
+        #    created=1709251200,  # March 2024
+        #    owned_by="deepseek-ai",
+        #    permission=[{
+        #        "id": "modelperm-janus-1.3b",
+        #        "object": "model_permission",
+        #        "created": 1709251200,
+        #        "allow_create_engine": False,
+        #        "allow_sampling": True,
+        #        "allow_logprobs": True,
+        #        "allow_search_indices": False,
+        #        "allow_view": True,
+        #        "allow_fine_tuning": False,
+        #        "organization": "*",
+        #        "group": None,
+        #        "is_blocking": False
+        #    }]
+        #),
+        ModelData(
+            id="janus-pro-7b",
+            created=1709251200,
+            owned_by="deepseek-ai",
+            permission=[{
+                "id": model_path,
+                "object": "model_permission",
+                "created": 1709251200,
+                "allow_create_engine": False,
+                "allow_sampling": True,
+                "allow_logprobs": True,
+                "allow_search_indices": False,
+                "allow_view": True,
+                "allow_fine_tuning": False,
+                "organization": "*",
+                "group": None,
+                "is_blocking": False
+            }]
+        )
+    ]
+    return ModelList(data=models)
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
@@ -218,6 +308,48 @@ async def create_image(request: ImageGenerationRequest):
             "created": int(time.time()),
             "data": response_images
         }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post('/v1/completions')
+async def completion(request: CompletionRequest):
+    try:
+        # Extract parameters
+        max_tokens = request.max_tokens
+        temperature = request.temperature
+        top_p = request.top_p
+        n = request.n
+        prompt = request.prompt
+
+        # Call multimodal_understanding instead of direct generate
+        model_response = multimodal_understanding(
+            prompt=prompt,
+            image_data=request.image_data,
+            max_new_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p
+        )
+
+        choices = [
+            CompletionChoice(
+                text=model_response,
+                index=i,
+                finish_reason="stop",
+            ) for i in range(n)
+        ]
+
+        usage = CompletionUsage(
+            prompt_tokens=prompt,
+            completion_tokens=model_response,
+            total_tokens=prompt + model_response,
+        )
+
+        return CompletionResponse(
+            model=request.model,
+            choices=choices,
+            usage=usage,
+        )
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
