@@ -127,16 +127,26 @@ def unpack(dec, width, height, parallel_size=5):
 
 
 @torch.inference_mode()
-def generate_image(prompt, seed, guidance):
+def generate_image(
+    prompt, 
+    seed=None,
+    guidance=5.0,
+    size="384x384",  # Add size parameter
+    parallel_size=5,
+):
     torch.cuda.empty_cache()
-    seed = seed if seed is not None else 12345
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    np.random.seed(seed)
-    width = 384
-    height = 384
-    parallel_size = 5
-    
+
+    if seed is not None:
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
+        np.random.seed(seed)
+
+    # Parse size string
+    try:
+        width, height = map(int, size.split('x'))
+    except ValueError:
+        raise ValueError("Size must be in format WIDTHxHEIGHT (e.g. 1024x1024)")
+
     with torch.no_grad():
         messages = [{'role': 'User', 'content': prompt}, {'role': 'Assistant', 'content': ''}]
         text = vl_chat_processor.apply_sft_template_for_multi_turn_prompts(

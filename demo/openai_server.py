@@ -197,7 +197,9 @@ async def create_image(request: ImageGenerationRequest):
         images = generate_image(
             prompt=request.prompt,
             seed=request.seed,
-            guidance=request.guidance
+            guidance=request.guidance,
+            size=request.size,
+            parallel_size=request.n,
         )
 
         response_images = []

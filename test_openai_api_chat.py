@@ -38,14 +38,6 @@ def main ():
 
 	print(response)
 
-'''# Image generation
-response = client.images.generate(
-	model="janus-1.3b",
-	prompt="A beautiful sunset over mountains",
-	n=1,
-	size="1024x1024"
-)'''
-
 
 if __name__ == "__main__":
 	main()
