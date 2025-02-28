@@ -180,7 +180,7 @@ class VLMImageProcessor(BaseImageProcessor):
         if self.do_normalize:
             images = [
                 self.normalize(
-                    image=image,
+                    image=image[:3],
                     mean=self.image_mean,
                     std=self.image_std,
                     input_data_format="channels_first",
