@@ -18,9 +18,10 @@ def loadJanus (path, device='cuda'):
 	return vl_chat_processor.image_processor, vl_gpt
 
 
-def encodeImage (image, image_processor, vl_gpt):
+def encodeImage (image, image_processor, vl_gpt, do_align=False):
 	pixels = image_processor([image], return_tensors='pt').pixel_values
 	x = vl_gpt.vision_model(pixels.to(torch.bfloat16).cuda())
-	x = vl_gpt.aligner(x)
+	if do_align:
+		x = vl_gpt.aligner(x)
 
 	return x
